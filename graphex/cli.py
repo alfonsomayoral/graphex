@@ -196,7 +196,8 @@ def cli(ctx: click.Context) -> None:
 @click.option(
     "--connected",
     is_flag=True,
-    help="Guarantee a connected subgraph (add minimal bridge nodes within budget).",
+    help="Stitch the result toward a connected subgraph by adding minimal bridge "
+    "nodes within budget (best-effort; can't bridge already-disconnected components).",
 )
 @click.option("--ignore-file", default=".graphexignore", show_default=True)
 @click.option("--no-cache", is_flag=True, help="Skip the on-disk cache.")
@@ -238,11 +239,16 @@ def query_cmd(
     cache = load_or_build(kg, base_dir=graph_path.parent, use_cache=not no_cache)
 
     breakdown = None
-    if explain:
-        breakdown = score_nodes_detailed(kg, query, cache=cache, backend=backend)
-        scores = breakdown.final
-    else:
-        scores = score_nodes(kg, query, cache=cache, backend=backend)
+    try:
+        if explain:
+            breakdown = score_nodes_detailed(kg, query, cache=cache, backend=backend)
+            scores = breakdown.final
+        else:
+            scores = score_nodes(kg, query, cache=cache, backend=backend)
+    except ImportError as exc:
+        # A semantic backend whose optional dependency isn't installed — surface
+        # the retriever's actionable message cleanly instead of a traceback.
+        raise click.ClickException(str(exc)) from exc
 
     # Reuse the precomputed base token costs when the encoding matches the cached one.
     token_costs = cache.token_costs if model == cache.token_model else None
@@ -290,26 +296,35 @@ def query_cmd(
 
 
 def _explain_table(sub, breakdown) -> Table:
+    # Only show the Semantic column when a semantic backend actually contributed.
+    show_semantic = any(v > 0.0 for v in breakdown.semantic.values())
     table = Table(title="Score breakdown", show_header=True, header_style="bold")
     table.add_column("#", style="dim", width=4)
     table.add_column("Label")
     table.add_column("Final", justify="right")
     table.add_column("BM25", justify="right")
+    if show_semantic:
+        table.add_column("Semantic", justify="right")
     table.add_column("PPR", justify="right")
     table.add_column("Prior", justify="right")
     table.add_column("Type", style="dim")
     ranked = sorted(sub.node_ids, key=lambda n: breakdown.final.get(n, 0.0), reverse=True)
     for i, nid in enumerate(ranked, 1):
         a = sub.digraph.nodes[nid]
-        table.add_row(
+        row = [
             str(i),
             a.get("label", nid),
             f"{breakdown.final.get(nid, 0.0):.3f}",
             f"{breakdown.bm25.get(nid, 0.0):.3f}",
+        ]
+        if show_semantic:
+            row.append(f"{breakdown.semantic.get(nid, 0.0):.3f}")
+        row += [
             f"{breakdown.ppr.get(nid, 0.0):.3f}",
             f"{breakdown.prior.get(nid, 0.0):.3f}",
             a.get("type") or a.get("file_type") or "",
-        )
+        ]
+        table.add_row(*row)
     return table
 
 

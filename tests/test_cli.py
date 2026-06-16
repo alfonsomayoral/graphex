@@ -128,6 +128,24 @@ def test_index_then_query(tmp_path):
         assert "authenticate" in res.output
 
 
+def test_missing_backend_dep_is_clean_error(monkeypatch):
+    # A semantic backend whose optional dependency isn't installed must produce a
+    # clean, actionable message — not a raw traceback.
+    import graphex.scorer as scorer
+
+    def _boom(graph, query, backend):
+        raise ImportError("The local backend requires: pip install 'graphex[local]'")
+
+    monkeypatch.setattr(scorer, "_semantic_scores", _boom)
+    runner = CliRunner()
+    with runner.isolated_filesystem():
+        _write_graph()
+        res = runner.invoke(cli, ["login", "--backend", "local", "--no-cache", "--no-audit"])
+        assert res.exit_code != 0
+        assert "Traceback" not in res.output
+        assert "graphex[local]" in res.output
+
+
 def test_init_scaffolds_ignore():
     runner = CliRunner()
     with runner.isolated_filesystem():

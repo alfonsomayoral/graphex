@@ -14,11 +14,16 @@ With a semantic backend (``local`` model2vec embeddings, or the cloud ``openai``
 and embedding rankings — so a node the query is *about* but shares no tokens with
 (e.g. "login" vs "sign in") can still seed the walk. RRF is rank-based, so the
 two scales need no calibration.
+
+Note: semantic backends behave like nearest-neighbour vector search — they always
+surface the closest nodes rather than returning empty for an unrelated query. The
+honest "nothing matched → empty result" guarantee applies to the default ``bm25``
+backend; pick it when a confident "no relevant nodes" answer matters.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from graphex.cache import CachedArtifacts, load_or_build
 from graphex.models import KnowledgeGraph
@@ -43,6 +48,8 @@ class ScoreBreakdown:
     bm25: dict[str, float]
     ppr: dict[str, float]
     prior: dict[str, float]
+    # Semantic similarity per node (empty for the bm25 backend).
+    semantic: dict[str, float] = field(default_factory=dict)
 
 
 def _artifacts(graph: KnowledgeGraph, cache: CachedArtifacts | None) -> CachedArtifacts:
@@ -83,6 +90,7 @@ def _compute(
     bm25: BM25Index = artifacts.bm25
     bm25_norm = bm25.normalized_scores(query)
     prior = fusion.importance_prior(graph)
+    semantic: dict[str, float] = {}
 
     if backend == "bm25":
         seeds = bm25.seeds(query, k=k_seeds)
@@ -101,14 +109,18 @@ def _compute(
     # subgraph — an honest "nothing relevant" for an LLM-context tool.
     if not seeds:
         zeros = dict.fromkeys(graph.node_ids, 0.0)
-        return ScoreBreakdown(final=zeros, bm25=bm25_norm, ppr=dict(zeros), prior=prior)
+        return ScoreBreakdown(
+            final=zeros, bm25=bm25_norm, ppr=dict(zeros), prior=prior, semantic=semantic
+        )
 
     ppr = personalized_pagerank(graph, seeds)
     final = fusion.fuse(
         ppr, prior, gamma=gamma, global_pr=artifacts.global_pagerank, delta=DEFAULT_DELTA
     )
 
-    return ScoreBreakdown(final=final, bm25=bm25_norm, ppr=normalize_max(ppr), prior=prior)
+    return ScoreBreakdown(
+        final=final, bm25=bm25_norm, ppr=normalize_max(ppr), prior=prior, semantic=semantic
+    )
 
 
 def score_nodes(
