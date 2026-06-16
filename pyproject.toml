@@ -1,6 +1,6 @@
 [project]
 name = "apexgraph"
-version = "0.1.0"
+version = "0.2.0"
 description = "Apex-relevance subgraph retrieval for AI agents. Feed your LLM the peak of your knowledge graph, sized to a token budget."
 readme = "README.md"
 requires-python = ">=3.12"
