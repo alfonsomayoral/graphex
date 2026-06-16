@@ -548,6 +548,53 @@ def audit(top_n: int, audit_dir: str) -> None:
 
 
 # ---------------------------------------------------------------------------
+# benchmark
+# ---------------------------------------------------------------------------
+
+
+@cli.command("benchmark")
+@click.option("--graph", "-g", default=None)
+@click.option(
+    "--query", "-q", "queries", multiple=True, required=True, help="Query to test (repeatable)."
+)
+@click.option(
+    "--budget",
+    "-b",
+    "budgets",
+    multiple=True,
+    type=int,
+    default=(2000, 4000, 8000),
+    show_default=True,
+)
+@click.option(
+    "--k-relevant", default=10, show_default=True, help="Size of the relevant set for recall."
+)
+@click.option("--output", "-o", default=None, help="Write raw results to a JSON file.")
+def benchmark_cmd(
+    graph: str | None,
+    queries: tuple[str, ...],
+    budgets: tuple[int, ...],
+    k_relevant: int,
+    output: str | None,
+) -> None:
+    """Measure recall@budget and token savings across queries and budgets."""
+    import json
+
+    from graphex.benchmark import format_benchmark, run_benchmark
+    from graphex.cache import load_or_build
+
+    graph_path = _resolve_graph(graph)
+    kg = _load(graph_path)
+    cache = load_or_build(kg, base_dir=graph_path.parent)
+    result = run_benchmark(kg, list(queries), list(budgets), k_relevant=k_relevant, cache=cache)
+    click.echo(format_benchmark(result))
+
+    if output:
+        Path(output).write_text(json.dumps(result.to_dict(), indent=2), encoding="utf-8")
+        click.echo(f"\nResults saved to {output}")
+
+
+# ---------------------------------------------------------------------------
 # init
 # ---------------------------------------------------------------------------
 
