@@ -36,6 +36,16 @@ command and import name remain `graphex`).
    runs `twine check`, and uploads to PyPI via OIDC. Watch it with
    `gh run watch`.
 
+## Dry run (no publish)
+
+Run the pipeline manually to validate the build, metadata, and artifact handling
+without touching PyPI — the upload step is skipped for non-release events:
+
+```bash
+gh workflow run publish.yml
+gh run watch
+```
+
 ## Verify
 
 ```bash
