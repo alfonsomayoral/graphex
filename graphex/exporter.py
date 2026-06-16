@@ -104,7 +104,11 @@ def export_context(
     Raises:
         ValueError: If ``format`` is not one of the supported values.
     """
-    body = format_subgraph(graph, stats, format="markdown", scores=scores, query=query)
+    # Suppress the decorative box header: a pasted context block shouldn't carry
+    # Graphex's internal token-budget meta-noise into the LLM's prompt.
+    body = format_subgraph(
+        graph, stats, format="markdown", scores=scores, query=query, include_header=False
+    )
 
     if format == "claude":
         return _wrap_claude(body, query)
