@@ -67,7 +67,7 @@ def test_recall_non_decreasing_in_budget():
     budgets = [TINY_BUDGET, 200, 600, 1500, HUGE_BUDGET]
     result = run_benchmark(g, ["authentication login session"], budgets=budgets)
     recalls = [r.recall_at_budget for r in result.rows]
-    for lo, hi in zip(recalls, recalls[1:]):
+    for lo, hi in zip(recalls, recalls[1:], strict=False):
         assert hi >= lo - 1e-9, f"recall dropped as budget grew: {recalls}"
 
 
@@ -76,7 +76,7 @@ def test_savings_non_increasing_in_budget():
     budgets = [TINY_BUDGET, 200, 600, 1500, HUGE_BUDGET]
     result = run_benchmark(g, ["billing payment invoice"], budgets=budgets)
     savings = [r.token_savings for r in result.rows]
-    for lo, hi in zip(savings, savings[1:]):
+    for lo, hi in zip(savings, savings[1:], strict=False):
         assert hi <= lo + 1e-9, f"savings rose as budget grew: {savings}"
 
 
@@ -132,7 +132,7 @@ def test_to_dict_round_trips():
     assert abs(d["mean_recall"] - result.mean_recall) < 1e-9
 
     # Each row dict carries every field and reconstructs an equal BenchmarkRow.
-    for row_dict, row in zip(d["rows"], result.rows):
+    for row_dict, row in zip(d["rows"], result.rows, strict=False):
         assert BenchmarkRow(**row_dict) == row
 
 
