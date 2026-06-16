@@ -7,6 +7,7 @@ the hidden ``query`` command, so ``graphex "how does auth work"`` just works.
 from __future__ import annotations
 
 import contextlib
+import difflib
 import sys
 import tempfile
 import webbrowser
@@ -86,14 +87,32 @@ def _version_callback(ctx: click.Context, _param: click.Parameter, value: bool) 
 
 
 class _GraphexGroup(click.Group):
-    """Route an unrecognised first argument to the hidden ``query`` command."""
+    """Route an unrecognised first argument to the hidden ``query`` command.
+
+    A single-token first argument that closely resembles a real command (e.g.
+    ``statss``) is treated as a typo and gets a "did you mean" hint, so a
+    mistyped subcommand isn't silently run as a search query.
+    """
 
     def resolve_command(self, ctx: click.Context, args: list):
         try:
             return super().resolve_command(ctx, args)
         except click.UsageError:
+            if not args:
+                raise
+            first = args[0]
+            visible = [c for c in self.list_commands(ctx) if c != "query"]
+            if first and " " not in first and not first.startswith("-"):
+                # High cutoff so real one-word queries (e.g. "auth") still search;
+                # only near-identical typos (e.g. "statss") are flagged.
+                close = difflib.get_close_matches(first, visible, n=1, cutoff=0.8)
+                if close:
+                    raise click.UsageError(
+                        f"No such command {first!r}. Did you mean {close[0]!r}? "
+                        f'(Use quotes to search, e.g. graphex "{first}".)'
+                    ) from None
             query_cmd = self.get_command(ctx, "query")
-            if query_cmd is not None and args:
+            if query_cmd is not None:
                 return "query", query_cmd, list(args)
             raise
 
@@ -109,7 +128,7 @@ class _GraphexGroup(click.Group):
 )
 @click.pass_context
 def cli(ctx: click.Context) -> None:
-    """Graphex — apex-relevance subgraph retrieval for AI agents.
+    """Graphex - apex-relevance subgraph retrieval for AI agents.
 
     Select the most relevant subgraph for your query within a token budget.
 
@@ -130,7 +149,14 @@ def cli(ctx: click.Context) -> None:
 @click.option(
     "--graph", "-g", default=None, help="Path to graph.json (auto-discovered if omitted)."
 )
-@click.option("--budget", "-b", default=4000, show_default=True, help="Token budget.")
+@click.option(
+    "--budget",
+    "-b",
+    type=click.IntRange(min=1),
+    default=4000,
+    show_default=True,
+    help="Token budget.",
+)
 @click.option(
     "--format",
     "-f",
@@ -187,6 +213,9 @@ def query_cmd(
     from graphex.ignore import apply_ignore, load_ignore
     from graphex.scorer import score_nodes, score_nodes_detailed
 
+    if not query.strip():
+        raise click.ClickException("Query must not be empty.")
+
     graph_path = _resolve_graph(graph)
     kg = _load(graph_path)
     kg = apply_ignore(kg, load_ignore(Path(ignore_file)))
@@ -218,13 +247,22 @@ def query_cmd(
 
     click.echo(format_subgraph(sub, stats, format=fmt, scores=scores, query=query))
 
+    if stats["nodes_selected"] == 0 and fmt == "markdown":
+        click.echo(
+            f"\nNo nodes cleared the relevance threshold (--min-score {min_score}) "
+            "for this query — try different terms or lower --min-score.",
+            err=True,
+        )
+
     if not no_audit:
         from graphex.audit import log_query
 
         top = sorted(sub.node_ids, key=lambda n: scores.get(n, 0.0), reverse=True)
         log_query(query, graph_path, stats, top, audit_dir=graph_path.parent / ".graphex")
 
-    if explain and breakdown is not None:
+    # The breakdown table is markdown-only — appending it to json/yaml would
+    # corrupt machine-readable output.
+    if explain and breakdown is not None and fmt == "markdown":
         _echo_rich(_explain_table(sub, breakdown))
 
     if viz:
@@ -279,7 +317,8 @@ def stats(graph: str | None) -> None:
     graph_path = _resolve_graph(graph)
     kg = _load(graph_path)
     communities = len(set(kg.communities.values())) if kg.communities else 0
-    table = Table(title=f"Graph: {graph_path}", show_header=False)
+    click.echo(f"Graph: {graph_path}")
+    table = Table(show_header=False)
     table.add_column("metric", style="bold")
     table.add_column("value", justify="right")
     table.add_row("Nodes", str(kg.digraph.number_of_nodes()))
@@ -346,6 +385,7 @@ def serve(graph: str | None) -> None:
     from graphex import mcp
 
     graph_path = _resolve_graph(graph)
+    _load(graph_path)  # fail fast with a clean error before entering the stdio loop
     mcp.serve(graph_path)
 
 
@@ -420,7 +460,13 @@ def path_cmd(source: str, target: str, graph: str | None) -> None:
 @click.argument("old_graph", type=click.Path(exists=True))
 @click.argument("new_graph", type=click.Path(exists=True))
 @click.option("--hops", default=2, show_default=True, help="Impact-neighbourhood depth.")
-@click.option("--budget", "-b", default=None, type=int, help="Token-budget the affected area.")
+@click.option(
+    "--budget",
+    "-b",
+    default=None,
+    type=click.IntRange(min=1),
+    help="Token-budget the affected area.",
+)
 @click.option("--viz", is_flag=True, help="Open the affected area in the browser.")
 def diff_cmd(old_graph: str, new_graph: str, hops: int, budget: int | None, viz: bool) -> None:
     """Compare two graph versions and show the impact of the changes."""
@@ -468,7 +514,7 @@ def diff_cmd(old_graph: str, new_graph: str, hops: int, budget: int | None, viz:
 @cli.command("export")
 @click.argument("query")
 @click.option("--graph", "-g", default=None)
-@click.option("--budget", "-b", default=4000, show_default=True)
+@click.option("--budget", "-b", type=click.IntRange(min=1), default=4000, show_default=True)
 @click.option(
     "--format",
     "-f",
@@ -487,6 +533,9 @@ def export_cmd(
     from graphex.cache import load_or_build
     from graphex.exporter import export_context
     from graphex.scorer import score_nodes
+
+    if not query.strip():
+        raise click.ClickException("Query must not be empty.")
 
     graph_path = _resolve_graph(graph)
     kg = _load(graph_path)
@@ -509,10 +558,18 @@ def export_cmd(
 
 @cli.command()
 @click.option("--top-nodes", "top_n", default=10, show_default=True)
-@click.option("--audit-dir", default=".graphex", show_default=True)
-def audit(top_n: int, audit_dir: str) -> None:
+@click.option(
+    "--audit-dir", default=None, help="Audit directory (default: the graph's .graphex sidecar)."
+)
+def audit(top_n: int, audit_dir: str | None) -> None:
     """Show query history and the most frequently selected nodes."""
     from graphex.audit import read_audit, top_nodes_from_audit
+
+    # Queries log to the discovered graph's sibling .graphex; default there so
+    # `graphex audit` reads the same place `graphex query` wrote to.
+    if audit_dir is None:
+        found = _find_graph()
+        audit_dir = str((found.parent / ".graphex") if found else Path(".graphex"))
 
     entries = read_audit(audit_dir)
     if not entries:
@@ -562,7 +619,7 @@ def audit(top_n: int, audit_dir: str) -> None:
     "-b",
     "budgets",
     multiple=True,
-    type=int,
+    type=click.IntRange(min=1),
     default=(2000, 4000, 8000),
     show_default=True,
 )
