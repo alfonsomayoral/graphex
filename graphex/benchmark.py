@@ -24,7 +24,12 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-from graphex.budget import count_tokens, select_subgraph
+from graphex.budget import (
+    _NODE_OVERHEAD_TOKENS,
+    _node_body,
+    count_tokens,
+    select_subgraph,
+)
 from graphex.cache import CachedArtifacts, load_or_build
 from graphex.models import KnowledgeGraph
 from graphex.scorer import score_nodes
@@ -100,10 +105,14 @@ class BenchmarkResult:
 def _full_graph_tokens(graph: KnowledgeGraph, model: str) -> int:
     """Token cost of injecting the whole graph — the naive baseline to beat.
 
-    A proxy for "stuff every node into the prompt": sum each node's searchable
-    text under the same encoding the budgeted path uses.
+    Computed with the *same* per-node accounting as the budgeted selection
+    (:func:`graphex.budget._node_body` + per-node overhead), so ``token_savings``
+    is a fair like-for-like comparison rather than a pessimistic one.
     """
-    return sum(count_tokens(graph.node_text(nid), model) for nid in graph.node_ids)
+    return sum(
+        count_tokens(_node_body(graph, nid, None), model) + _NODE_OVERHEAD_TOKENS
+        for nid in graph.node_ids
+    )
 
 
 def _relevant_set(scores: dict[str, float], k: int) -> set[str]:
