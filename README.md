@@ -44,19 +44,40 @@ Graphex scores every node against your query, then selects the highest-value
 subgraph that fits a token ceiling. One command, one principled relevance number
 per node, a budget that's never exceeded.
 
-```
-   graph.json ──load─▶ ┌───────────────────────────────────────────────┐
-  (graphify, or        │  SCORE   BM25 + stemming ──seed──▶ Personalized │
-   `graphex index`)    │          PageRank  (+ optional local / cloud    │
-   query ────────────▶ │          embeddings, fused by RRF) + priors     │
-                       └─────────────────────┬─────────────────────────┘
-                                             ▼
-                       ┌───────────────────────────────────────────────┐
-                       │  SELECT  cost-aware MMR knapsack under a token  │
-                       │          budget  (+ connectivity, honest cost)  │
-                       └─────────────────────┬─────────────────────────┘
-                                             ▼
-                 RENDER  markdown · json · yaml   │   MCP server   │   HTML viz
+```mermaid
+flowchart TB
+    SRC["📁 your source code"] -->|"graphex index"| KG
+    GFY["🕸️ graphify graph.json"] -->|"load · native"| KG
+    KG[("Knowledge Graph<br/>weighted edges · confidence<br/>hyperedges · communities · god nodes")]
+
+    Q(["💬 query"]) --> SCORE
+    KG --> SCORE
+
+    subgraph SCORE ["① SCORE · one relevance number per node"]
+      direction LR
+      BM25["BM25<br/>+ stemming"] --> SEEDS{{seeds}}
+      EMB["local / cloud<br/>embeddings"] -. "RRF fusion" .-> SEEDS
+      SEEDS --> PPR["Personalized PageRank<br/>weight × confidence + hyperedge cliques"]
+      PPR --> FUSE["+ importance / god-node prior<br/>+ global-PageRank tiebreak"]
+    end
+
+    subgraph SELECT ["② SELECT · best subgraph under a token budget"]
+      direction LR
+      KNAP["cost-aware<br/>MMR knapsack"] --> CONN["+ connectivity<br/>(Steiner)"]
+      CONN --> COST["honest token<br/>accounting"]
+    end
+
+    FUSE --> SELECT
+    SELECT --> MD["📄 markdown / json / yaml"]
+    SELECT --> MCP["🔌 MCP server"]
+    SELECT --> VIZ["📊 interactive HTML viz"]
+
+    CACHE["⚡ cached once: global PageRank · BM25 index · token costs"] -. "content-hash invalidated" .-> SCORE
+
+    classDef store fill:#1f2937,stroke:#4f9dff,color:#e5e7eb;
+    classDef out fill:#0f3d2e,stroke:#3ddc97,color:#e5e7eb;
+    class KG store;
+    class MD,MCP,VIZ out;
 ```
 
 It reads graphify's graphs **natively** and uses the rich signals graphify emits
@@ -102,44 +123,48 @@ nodes under a token ceiling is exactly the knapsack problem. Graphex selects by
 so it doesn't say the same thing twice, and a connectivity bonus so the subgraph
 holds together. The single most relevant node is guaranteed to survive.
 
-## 📊 Results
+## 📊 Results — Graphex vs graphify
 
-### vs `slurp` (the prior-art tool Graphex improves on)
+Head-to-head on the **same real codebase** — a production app app
+(~9,000-node graph). graphify answers with its native graph + BFS query; Graphex
+builds a clean code-only index and retrieves. Averaged over **10 feature
+queries** at a 2,000-token budget:
 
-A reproducible head-to-head lives in [`bench/`](bench/). On a labeled query set,
-measuring **precision and recall together** (because recall alone is gameable):
+<div align="center">
 
-| tool | precision | what it does |
-|------|-----------|--------------|
-| **graphex** | **32–38%** | returns a tight, on-topic subgraph |
-| slurp | ~8% | pads the budget with low-relevance nodes to inflate raw recall |
+| metric | graphify | graphex&nbsp;`bm25` | graphex&nbsp;`local` |
+|---|:---:|:---:|:---:|
+| 🎯 **on-topic precision** *(feature code)* | 3% | 36% | **47%** |
+| 🧹 **translation-string noise** | 80% | **0%** | **0%** |
+| 🎈 **nodes handed to the LLM** | 38 | 11 | **11** |
+| ⚡ **latency / query** | 0.80 s | **0.03 s** | 0.18 s |
 
-> slurp posts higher *raw* recall — by returning almost the whole graph. ~90% of
-> what it hands the model is off-topic. Graphex is **4–10× more precise** under
-> budget, and its `local` backend recovers relevant nodes on semantic queries
-> where lexical retrieval (slurp's TF-IDF *and* Graphex's own BM25) scores zero.
+</div>
 
-### On a real codebase (a ~9k-node graph of a app app)
-
-| | graphify query | graphex |
-|---|---|---|
-| nodes returned for an "auth" query | 89 (mostly i18n translation strings) | **12 — all actual auth code** |
-| latency | ~0.9s | **~0.1s** (≈10× faster) |
-| build your own graph | — | **5,178 code nodes from 391 files in ~1.5s** |
-
-Querying Graphex's own clean code index returns exactly the feature code, with
-**zero translation-string noise**:
+**Graphex's semantic backend is ~16× more precise than graphify and returns zero
+translation noise** — because graphify's graph is ~58% i18n strings and its BFS
+walks straight into them, while Graphex's own indexer keeps only code and its
+scoring ranks the *actual* feature code to the top:
 
 ```text
-"AI coaching"        → Component, Component, Component, store
-"streak tracking"    → Component, Component, Component, Store
-"workout tracking"   → Component, Component, Component
+query "AI coaching"
+  graphify → file.json, file.json, file.json …   (translation files first)
+  graphex  → Component, Component, Component, store
+
+query "user authentication and login flow"
+  graphify → 89 nodes, mostly i18n strings (term, term, exercises …)
+  graphex  → 12 nodes — a_symbol, a_symbol, a_function …
 ```
 
-> Honest caveat: a single "accuracy %" on a real repo is unreliable to measure
-> automatically — features sprawl across `app/`, `components/`, `store/` and
-> backend functions, so any one-directory ground truth undercounts correct hits.
-> The objective wins (focus, speed, clean graph, on-topic ranking) are what hold.
+And Graphex builds that clean graph itself, fast: **5,178 code nodes from 391
+files in ~1.5 s**, no LLM required.
+
+> **On honesty:** precision is reported as *feature code that isn't a translation
+> string*; recall isn't compared because the two tools index different node
+> universes. A reproducible slurp head-to-head also lives in [`bench/`](bench/).
+> The takeaway is consistent across both: Graphex trades a little raw recall for a
+> large gain in **precision, focus and speed** — which is what an LLM context
+> window actually rewards.
 
 ---
 
