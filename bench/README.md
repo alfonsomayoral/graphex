@@ -74,7 +74,7 @@ are printed as two tables and written to `bench/results.json`.
 | `graphex-local`| semantic | 68%         | 23%            |
 | `graphex-local`| overall  | 75%         | 32%            |
 | `slurp`        | lexical  | 94%         | 9%             |
-| `slurp`        | semantic | 92%         | 8%             |
+| `slurp`        | semantic | 92%         | 6%             |
 | `slurp`        | overall  | 93%         | 8%             |
 
 ### Reading these honestly

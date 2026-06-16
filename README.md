@@ -95,7 +95,7 @@ graphex "session token validation" -b 2000
 graphex "authorization gate" --backend local # offline semantic recall (no shared tokens needed)
 graphex "auth flow" --explain               # per-node BM25 / PPR / prior breakdown
 graphex "auth flow" --inject-code           # include real function bodies, still in budget
-graphex "auth flow" --connected             # guarantee a single connected subgraph
+graphex "auth flow" --connected             # stitch toward a connected subgraph (best-effort)
 graphex "auth flow" --viz                   # interactive force-directed HTML
 
 # Inspect (node ids come from your indexed graph; these match examples/)

@@ -13,8 +13,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   Rank Fusion to seed Personalized PageRank.
 - **Stemming** in the tokenizer so morphological variants match (e.g. a query for
   "authentication" matches a node labelled "authenticate").
-- **`--connected`** — guarantee a single connected subgraph by adding minimal
-  bridge nodes (approximate Steiner), never exceeding the budget.
+- **`--connected`** — stitch the result toward a connected subgraph by adding
+  minimal bridge nodes (approximate Steiner), never exceeding the budget
+  (best-effort: cannot bridge components already disconnected in the source graph).
 - **`--strict-ids`** indexer mode for collision-free node ids (full-path module
   ids, scope-qualified symbols).
 - Per-node token costs are precomputed and cached, so a query no longer
