@@ -32,12 +32,14 @@ dependencies = [
     "networkx>=3.2",
     "pathspec>=0.12",
     "rich>=13.7",
+    "snowballstemmer>=2.2",
     "tiktoken>=0.7",
 ]
 
 [project.optional-dependencies]
 ts = ["tree-sitter>=0.22", "tree-sitter-typescript>=0.23"]
-dense = ["openai>=1.40", "anthropic>=0.34"]
+local = ["model2vec>=0.3"]
+dense = ["openai>=1.40", "voyageai>=0.2"]
 viz = ["watchdog>=4.0"]
 
 [project.urls]
