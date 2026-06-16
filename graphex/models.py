@@ -220,6 +220,29 @@ class KnowledgeGraph:
                     out.append((b, a, w))
         return out
 
+    def induced_subgraph(self, node_ids: set[str] | list[str]) -> KnowledgeGraph:
+        """Return a new :class:`KnowledgeGraph` induced on ``node_ids``.
+
+        Carries over the induced edges, the side metadata for the kept nodes
+        (communities, god nodes), and any hyperedge all of whose members survive.
+        Node/edge attribute dicts are copied so mutating the subgraph (e.g.
+        injecting code blocks) never touches the source graph.
+        """
+        keep = set(node_ids) & set(self.digraph.nodes)
+        sub = KnowledgeGraph()
+        for nid in self.digraph.nodes:
+            if nid in keep:
+                sub.digraph.add_node(nid, **dict(self.digraph.nodes[nid]))
+        for u, v, data in self.digraph.edges(data=True):
+            if u in keep and v in keep:
+                sub.digraph.add_edge(u, v, **dict(data))
+        sub.communities = {n: c for n, c in self.communities.items() if n in keep}
+        sub.god_nodes = {n for n in self.god_nodes if n in keep}
+        for he in self.hyperedges:
+            if he.nodes and all(n in keep for n in he.nodes):
+                sub.hyperedges.append(he)
+        return sub
+
     def fingerprint(self) -> str:
         """Stable content hash, used to invalidate the on-disk cache.
 
