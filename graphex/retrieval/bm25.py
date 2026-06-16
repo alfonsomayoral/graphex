@@ -18,12 +18,21 @@ import re
 from collections import Counter
 from typing import Any
 
+import snowballstemmer
+
 from graphex.models import KnowledgeGraph
 from graphex.retrieval.base import normalize
 
 # Default Okapi BM25 hyper-parameters.
 _K1: float = 1.5
 _B: float = 0.75
+
+# A single, reusable English Snowball stemmer. It is stateless, so one shared
+# instance is safe to call from anywhere. Stemming maps morphological variants
+# ("authentication", "authenticate") onto a shared stem, closing a recall gap
+# between query and document wording. For non-words (numbers, already-minimal
+# tokens) Snowball returns the input unchanged.
+_STEMMER = snowballstemmer.stemmer("english")
 
 # Identifier-boundary substitutions: "HTTPServer" -> "HTTP Server",
 # "playerStats" -> "player Stats". Applied before lowercasing.
@@ -33,7 +42,7 @@ _BOUNDARY_LOWER_UPPER = re.compile(r"([a-z0-9])([A-Z])")
 _WORD = re.compile(r"[a-z0-9]+")
 
 
-def tokenize(text: str) -> list[str]:
+def tokenize(text: str, stem: bool = True) -> list[str]:
     """Split ``text`` into lexical tokens, preserving compound identifiers.
 
     Splits ``camelCase`` / ``PascalCase`` / ``snake_case`` / ``kebab-case`` /
@@ -44,11 +53,22 @@ def tokenize(text: str) -> list[str]:
     original compound token (e.g. ``recalcularplayerstats``) survives alongside
     its split parts (``recalcular``, ``player``, ``stats``).
 
+    When ``stem`` is true (the default) each token — split parts and preserved
+    compounds alike — is reduced to its English Snowball stem, so morphological
+    variants match across queries and documents (e.g. ``authentication`` and
+    ``authenticate`` collapse onto a shared stem). Stemming is applied
+    identically here for both sides, so the BM25 ``df``/IDF are computed over
+    stems, which is intended. Numeric and other non-word tokens are returned
+    unchanged by Snowball.
+
     The returned order is deterministic: split parts first (in reading order),
-    then the extra compound tokens (in reading order).
+    then the extra compound tokens (in reading order). Consecutive duplicates
+    that stemming may introduce (e.g. a split part and its stem collapsing into
+    its neighbour) are dropped to keep the sequence tidy.
 
     Args:
         text: Arbitrary free text or an identifier.
+        stem: When true, reduce every token to its English Snowball stem.
 
     Returns:
         The list of tokens. May contain duplicates among the split parts, but no
@@ -63,7 +83,21 @@ def tokenize(text: str) -> list[str]:
         if compound not in seen:
             parts.append(compound)
             seen.add(compound)
-    return parts
+
+    if not stem:
+        return parts
+
+    stemmed: list[str] = []
+    for tok in parts:
+        if not tok:
+            continue
+        stem_tok = _STEMMER.stemWord(tok) or tok
+        # Drop only consecutive duplicates stemming may create; non-adjacent
+        # repeats (genuine term frequency) are preserved for BM25.
+        if stemmed and stemmed[-1] == stem_tok:
+            continue
+        stemmed.append(stem_tok)
+    return stemmed
 
 
 class BM25Index:

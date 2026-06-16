@@ -13,26 +13,51 @@ from graphex.retrieval.bm25 import BM25Index, BM25Retriever, tokenize
 
 def test_tokenize_camel_case_splits_and_preserves_compound() -> None:
     tokens = tokenize("recalcularPlayerStats")
-    # Split parts come first, in reading order.
-    assert tokens[:3] == ["recalcular", "player", "stats"]
-    # The original compound token is preserved (lowercased) and appended.
-    assert "recalcularplayerstats" in tokens
+    # Split parts come first, in reading order (stemmed: "stats" -> "stat").
+    assert tokens[:3] == ["recalcular", "player", "stat"]
+    # The original compound token is preserved (lowercased, stemmed) and appended.
+    assert "recalcularplayerstat" in tokens
 
 
 def test_tokenize_pascal_and_acronym_boundaries() -> None:
     assert tokenize("HTTPServerError")[:3] == ["http", "server", "error"]
-    assert tokenize("PlayerStats")[:2] == ["player", "stats"]
+    # "stats" stems to "stat".
+    assert tokenize("PlayerStats")[:2] == ["player", "stat"]
 
 
 def test_tokenize_snake_kebab_dotted() -> None:
-    assert tokenize("recalcular_player_stats")[:3] == ["recalcular", "player", "stats"]
-    assert tokenize("recalcular-player-stats")[:3] == ["recalcular", "player", "stats"]
-    assert tokenize("module.player.stats")[:3] == ["module", "player", "stats"]
+    # "stats" stems to "stat"; "module" stems to "modul".
+    assert tokenize("recalcular_player_stats")[:3] == ["recalcular", "player", "stat"]
+    assert tokenize("recalcular-player-stats")[:3] == ["recalcular", "player", "stat"]
+    assert tokenize("module.player.stats")[:3] == ["modul", "player", "stat"]
 
 
 def test_tokenize_compound_not_duplicated_when_already_a_part() -> None:
     # A plain word equals its own split part, so it must not appear twice.
     assert tokenize("player") == ["player"]
+
+
+def test_tokenize_stem_off_returns_unstemmed_tokens() -> None:
+    # With stemming disabled the raw split parts and compound survive verbatim.
+    assert tokenize("PlayerStats", stem=False)[:2] == ["player", "stats"]
+    assert tokenize("recalcularPlayerStats", stem=False)[:3] == [
+        "recalcular",
+        "player",
+        "stats",
+    ]
+    assert "recalcularplayerstats" in tokenize("recalcularPlayerStats", stem=False)
+
+
+def test_tokenize_morphological_variants_share_a_stem() -> None:
+    # The recall win: query/document wording variants collapse onto one stem.
+    auth_n = tokenize("authentication")
+    auth_v = tokenize("authenticate")
+    assert set(auth_n) & set(auth_v)
+    assert auth_n == auth_v == ["authent"]
+    # Without stemming they stay distinct (the gap this closes).
+    assert not (
+        set(tokenize("authentication", stem=False)) & set(tokenize("authenticate", stem=False))
+    )
 
 
 # -- index fixtures ----------------------------------------------------------
@@ -68,6 +93,28 @@ def _build_graph() -> KnowledgeGraph:
 
 
 # -- scoring -----------------------------------------------------------------
+
+
+def test_stemming_closes_recall_gap_across_morphology() -> None:
+    # The node says "authenticate"; the query says "authentication". Before
+    # stemming these never matched and the node scored 0.0. With stemming both
+    # reduce to "authent", so the query now retrieves the node.
+    kg = KnowledgeGraph()
+    kg.add_node(
+        Node(
+            id="auth",
+            label="login",
+            type="function",
+            description="validate credentials and authenticate the user",
+        )
+    )
+    kg.add_node(
+        Node(id="other", label="loadConfig", type="function", description="read settings from disk")
+    )
+    index = BM25Index.from_graph(kg)
+    scores = index.scores("authentication")
+    assert scores["auth"] > 0.0
+    assert scores["other"] == 0.0
 
 
 def test_query_term_ranks_matching_node_highest() -> None:
