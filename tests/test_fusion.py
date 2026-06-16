@@ -3,7 +3,12 @@
 from __future__ import annotations
 
 from graphex.models import KnowledgeGraph, Node
-from graphex.retrieval.fusion import fuse, importance_prior, reciprocal_rank_fusion
+from graphex.retrieval.fusion import (
+    fuse,
+    importance_prior,
+    reciprocal_rank_fusion,
+    seeds_from_scores,
+)
 
 
 def test_importance_prior_god_node_on_top():
@@ -43,3 +48,22 @@ def test_rrf_combines_rankings():
 
 def test_rrf_empty():
     assert reciprocal_rank_fusion([]) == {}
+
+
+def test_fuse_global_pr_tiebreak_only_on_reached_nodes():
+    ppr = {"a": 1.0, "b": 1.0, "c": 0.0}  # c was not reached by the walk
+    prior = {"a": 0.0, "b": 0.0, "c": 1.0}
+    global_pr = {"a": 0.2, "b": 1.0, "c": 1.0}
+    fused = fuse(ppr, prior, gamma=0.1, global_pr=global_pr, delta=0.05)
+    # b gets the bigger structural tiebreak among the two reached, equal-ppr nodes.
+    assert fused["b"] > fused["a"]
+    # c was unreached (ppr 0) → stays exactly 0 despite its prior/global_pr.
+    assert fused["c"] == 0.0
+
+
+def test_seeds_from_scores_top_k_distribution():
+    scores = {"a": 0.9, "b": 0.5, "c": 0.1, "d": 0.0}
+    seeds = seeds_from_scores(scores, k=2)
+    assert set(seeds) == {"a", "b"}  # top 2 positive
+    assert abs(sum(seeds.values()) - 1.0) < 1e-9
+    assert seeds_from_scores({"x": 0.0}, k=3) == {}  # no positive scores

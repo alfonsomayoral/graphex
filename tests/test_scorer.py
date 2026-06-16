@@ -104,6 +104,25 @@ def test_detailed_components_present():
     assert set(bd.final) == set(g.node_ids)
 
 
+def test_semantic_backend_seeds_via_rrf(monkeypatch):
+    # A query with NO lexical overlap should still surface a node when the
+    # semantic backend ranks it high — validates the RRF seeding wiring without
+    # needing a real embedding model (we inject the semantic scores).
+    import graphex.scorer as scorer
+
+    g = _auth_graph()
+    # A realistic semantic backend scores every node; here "login" is the clear
+    # semantic match for a query that shares no tokens with the graph.
+    monkeypatch.setattr(
+        scorer,
+        "_semantic_scores",
+        lambda graph, query, backend: {nid: (1.0 if nid == "login" else 0.05) for nid in graph.node_ids},
+    )
+    scores = score_nodes(g, "zzz nonlexical query", backend="local")
+    assert scores["login"] > 0.0  # semantically seeded despite zero token overlap
+    assert scores["login"] > scores["ui"]  # the semantic hit beats an isolated node
+
+
 def test_hyperedge_lifts_co_members():
     base = _auth_graph()
     boosted = _auth_graph()

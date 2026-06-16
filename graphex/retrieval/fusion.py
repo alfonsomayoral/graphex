@@ -38,19 +38,48 @@ def fuse(
     ppr: dict[str, float],
     prior: dict[str, float],
     gamma: float = 0.1,
+    global_pr: dict[str, float] | None = None,
+    delta: float = 0.05,
 ) -> dict[str, float]:
-    """Combine the spread relevance with the importance prior.
+    """Combine the spread relevance with the importance and structural priors.
 
-    ``score(n) = normalize(ppr)(n) + gamma * prior(n)``.
+    ``score(n) = normalize(ppr)(n) + gamma * prior(n) + delta * global_pr(n)``.
 
-    PPR is the primary signal; ``gamma`` keeps the prior a gentle nudge rather
-    than a second opinion that can override a strong query match.
+    PPR is the primary signal. ``gamma`` keeps the importance/god-node prior a
+    gentle nudge; ``delta`` adds a small query-independent centrality tiebreak
+    from the (cached) global PageRank. ``global_pr`` is normalized to ``[0, 1]``
+    here; when omitted, the structural term contributes nothing.
+
+    Priors apply only to nodes the walk actually reached (``ppr > 0``): they
+    refine the ranking of relevant nodes without resurrecting irrelevant ones,
+    so a node unreachable from the query seeds stays at exactly ``0`` (preserving
+    the honest "nothing matched" behaviour downstream).
     """
     ppr_n = normalize(ppr)
+    gpr_n = normalize(global_pr) if global_pr else {}
     out: dict[str, float] = {}
-    for nid in ppr_n:
-        out[nid] = ppr_n[nid] + gamma * prior.get(nid, 0.0)
+    for nid, base in ppr_n.items():
+        if base > 0.0:
+            base += gamma * prior.get(nid, 0.0) + delta * gpr_n.get(nid, 0.0)
+        out[nid] = base
     return out
+
+
+def seeds_from_scores(scores: dict[str, float], k: int = 10) -> dict[str, float]:
+    """Top-``k`` nodes by score as a restart distribution (summing to 1).
+
+    Used to turn a fused ranking (e.g. RRF of BM25 + semantic) into Personalized
+    PageRank seeds. Keeps only positive scores; returns ``{}`` if none.
+    """
+    positive = [(nid, s) for nid, s in scores.items() if s > 0.0]
+    if not positive:
+        return {}
+    positive.sort(key=lambda kv: (-kv[1], kv[0]))
+    top = positive[:k]
+    total = sum(s for _, s in top)
+    if total <= 0.0:
+        return {}
+    return {nid: s / total for nid, s in top}
 
 
 def reciprocal_rank_fusion(
