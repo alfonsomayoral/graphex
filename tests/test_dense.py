@@ -37,6 +37,27 @@ def test_dense_empty_graph():
     assert DenseRetriever(embed_fn=_fake_embed).score(KnowledgeGraph(), "q") == {}
 
 
+def test_voyage_backend_scores_with_injected_embedder():
+    g = KnowledgeGraph()
+    g.add_node(Node(id="a", label="auth service", description="auth auth login"))
+    g.add_node(Node(id="b", label="db pool", description="db connections"))
+    g.add_node(Node(id="c", label="ui button", description="ui widget"))
+    r = DenseRetriever(backend="voyage", embed_fn=_fake_embed)
+    scores = r.score(g, "auth login")
+    assert scores["a"] == max(scores.values())
+    assert scores["a"] > scores["b"]
+
+
+def test_known_backends_accepted_with_injected_embedder():
+    for backend in ("openai", "voyage"):
+        DenseRetriever(backend=backend, embed_fn=_fake_embed)
+
+
+def test_anthropic_backend_rejected():
+    with pytest.raises(ValueError):
+        DenseRetriever(backend="anthropic")
+
+
 def test_unknown_backend_rejected():
     with pytest.raises(ValueError):
         DenseRetriever(backend="nope")

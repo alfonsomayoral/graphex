@@ -6,7 +6,9 @@ don't share tokens with the labels — this backend scores nodes by cosine
 similarity to the query embedding, and :mod:`graphex.retrieval.fusion` can blend
 its ranking with BM25 via Reciprocal Rank Fusion.
 
-Requires ``pip install 'graphex[dense]'`` and the relevant provider API key.
+Backends: ``openai`` (``text-embedding-3-small``) and ``voyage`` (Voyage AI's
+``voyage-3``). Requires ``pip install 'graphex[dense]'`` and the relevant
+provider API key.
 """
 
 from __future__ import annotations
@@ -17,7 +19,7 @@ from graphex.models import KnowledgeGraph
 from graphex.retrieval.base import normalize
 
 _OPENAI_MODEL = "text-embedding-3-small"
-_ANTHROPIC_MODEL = "voyage-3-large"
+_VOYAGE_MODEL = "voyage-3"
 
 
 def _cosine(a: list[float], b: list[float]) -> float:
@@ -39,25 +41,24 @@ def _embed_openai(texts: list[str]) -> list[list[float]]:
     return [item.embedding for item in resp.data]
 
 
-def _embed_anthropic(texts: list[str]) -> list[list[float]]:
+def _embed_voyage(texts: list[str]) -> list[list[float]]:
     try:
-        import anthropic
+        import voyageai
     except ImportError as exc:  # pragma: no cover - exercised only without the extra
-        raise ImportError("The anthropic backend requires: pip install 'graphex[dense]'") from exc
-    client = anthropic.Anthropic()
-    body = {"model": _ANTHROPIC_MODEL, "input": texts, "input_type": "document"}
-    resp = client.post(path="/v1/embeddings", body=body, cast_to=object)
-    return [item["embedding"] for item in resp["data"]]
+        raise ImportError("The voyage backend requires: pip install 'graphex[dense]'") from exc
+    client = voyageai.Client()
+    result = client.embed(texts, model=_VOYAGE_MODEL, input_type="document")
+    return result.embeddings
 
 
-_BACKENDS = {"openai": _embed_openai, "anthropic": _embed_anthropic}
+_BACKENDS = {"openai": _embed_openai, "voyage": _embed_voyage}
 
 
 class DenseRetriever:
     """Scores nodes by embedding cosine similarity. Conforms to ``Retriever``.
 
     Args:
-        backend: ``"openai"`` or ``"anthropic"``.
+        backend: ``"openai"`` or ``"voyage"``.
         embed_fn: Inject a custom ``list[str] -> list[list[float]]`` (handy for
             tests, or to plug a local embedding model). Overrides ``backend``.
     """
